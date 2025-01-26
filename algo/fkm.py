@@ -338,7 +338,7 @@ class FKMInterface:
             actions_seq = np.array(manage_replay_buffer.storage[9])
         else:
             latest_states, latest_next_states, latest_actions_seq = [manage_replay_buffer.storage[_i][-10000:] for _i in [0, 1, 9]]
-            states, next_states, _, _, _, _, _, _, _, actions_seq, _ = manage_replay_buffer.sample(MAX_SAMPLE_FOR_TRAIN)
+            states, next_states, _, _, _, _, _, _, _, _, actions_seq, _, _ = manage_replay_buffer.sample(MAX_SAMPLE_FOR_TRAIN)
             states = np.vstack([latest_states, states])
             next_states = np.vstack([latest_next_states, next_states])
             actions_seq = np.vstack([latest_actions_seq, actions_seq])
