@@ -3,6 +3,10 @@ This is a PyTorch implementation for our paper: Inter-layer Alignment and Contra
 
 Our code is based on official implementation of [GCMR](https://github.com/HaoranWang-TJ/GCMR_ACLG_official) (TNNLS 2024).
 
+# new experiment about reward error
+Reward error is caused by the poor achievement of subgoals by LLN and the inability of environmental rewards to represent subgoal rewards. The controller reward is defined as $r_i^l = -\parallel f(s_{i+c})-sg_i \parallel _2$, which can represents reward error. Our new experiment shows that IACRS got higher controller reward than GCMR, which means lower reward error.
+![reward_error](pic/reward_error.svg)
+
 ## Installation
 ```
 conda create -n iacrs python=3.7
