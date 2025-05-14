@@ -368,12 +368,12 @@ def run_higl(args):
     state_dict = {}
     adj_mat_size = 1000
     adj_mat = []
-    adj_factor = args.adj_factor if args.algo in ['higl', 'aclg', 'iacrs'] else 1
+    adj_factor = args.adj_factor if args.algo in ['higl', 'aclg', 'dca'] else 1
     for i in range(int(args.manager_propose_freq * adj_factor)):
         adj_mat.append(np.diag(np.ones(adj_mat_size, dtype=np.uint8)))
     traj_buffer = utils.TrajectoryBuffer(capacity=args.traj_buffer_size)
-    if args.algo in ['higl', 'hrac', 'aclg', 'iacrs']:
-        if args.algo == 'iacrs':
+    if args.algo in ['higl', 'hrac', 'aclg', 'dca']:
+        if args.algo == 'dca':
             a_net = []
             re_a_net = []
             for i in range(int(args.manager_propose_freq * adj_factor)):
@@ -422,7 +422,7 @@ def run_higl(args):
 
     r_margin_con = args.r_margin_pos
     # Novelty PQ and novelty algorithm
-    if args.algo in ['higl', 'aclg', 'iacrs'] and args.use_novelty_landmark:
+    if args.algo in ['higl', 'aclg', 'dca'] and args.use_novelty_landmark:
         if args.novelty_algo == 'rnd':
             novelty_pq = utils.PriorityQueue(args.n_landmark_novelty,
                                              close_thr=args.close_thr,
@@ -506,11 +506,11 @@ def run_higl(args):
             # Train manager
             if skip_ctrl_train >= args.train_manager_freq and len(manager_buffer) >= 5 * args.man_batch_size:
                 r_margin = (args.r_margin_pos + args.r_margin_neg) / 2
-                if args.algo == 'iacrs':
+                if args.algo == 'dca':
                     k = check_con_ability(check_con_policy, a_net, r_margin, torch.tensor(state), subgoal, writer, total_timesteps, goal_dim)
-                    iacrs_a_net = a_net[k]
+                    dca_a_net = a_net[k]
                 else:
-                    iacrs_a_net = a_net
+                    dca_a_net = a_net
                 man_act_loss, man_crit_loss, man_goal_loss, man_ld_loss, man_floss, avg_scaled_norm_direction = \
                     manager_policy.train(args.algo,
                                             controller_policy,
@@ -520,7 +520,7 @@ def run_higl(args):
                                             batch_size=args.man_batch_size,
                                             discount=args.discount,
                                             tau=args.man_tau,
-                                            a_net=iacrs_a_net,
+                                            a_net=dca_a_net,
                                             r_margin=r_margin,
                                             novelty_pq=novelty_pq,
                                             total_timesteps=total_timesteps,
@@ -545,7 +545,7 @@ def run_higl(args):
             # Update Novelty Priority Queue
             if ep_obs_seq is not None:
                 assert ep_ac_seq is not None
-                if args.algo in ['higl', 'aclg', 'iacrs'] and args.use_novelty_landmark:
+                if args.algo in ['higl', 'aclg', 'dca'] and args.use_novelty_landmark:
                     if args.novelty_algo == 'rnd':
                         if args.use_ag_as_input:
                             novelty = RND.get_novelty(np.array(ep_ac_seq).copy())
@@ -601,11 +601,11 @@ def run_higl(args):
                     if timesteps_since_manager >= args.train_manager_freq:
                         timesteps_since_manager = 0
                         r_margin = (args.r_margin_pos + args.r_margin_neg) / 2
-                        if args.algo == 'iacrs':
+                        if args.algo == 'dca':
                             k = check_con_ability(check_con_policy, a_net, r_margin, torch.tensor(state), subgoal, writer, total_timesteps, goal_dim)
-                            iacrs_a_net = a_net[k]
+                            dca_a_net = a_net[k]
                         else:
-                            iacrs_a_net = a_net
+                            dca_a_net = a_net
                         man_act_loss, man_crit_loss, man_goal_loss, man_ld_loss, man_floss, avg_scaled_norm_direction = \
                             manager_policy.train(args.algo,
                                                 controller_policy,
@@ -615,7 +615,7 @@ def run_higl(args):
                                                 batch_size=args.man_batch_size,
                                                 discount=args.discount,
                                                 tau=args.man_tau,
-                                                a_net=iacrs_a_net,
+                                                a_net=dca_a_net,
                                                 r_margin=r_margin,
                                                 novelty_pq=novelty_pq,
                                                 total_timesteps=total_timesteps,
@@ -663,11 +663,11 @@ def run_higl(args):
                         controller_buffer.save("{}/{}_{}_{}_{}_controller_buffer".format(args.save_dir, args.env_name, args.algo, args.version, args.seed))
 
                 # Train adjacency network
-                if args.algo in ["higl", "hrac", "aclg", "iacrs"]:
+                if args.algo in ["higl", "hrac", "aclg", "dca"]:
                     if traj_buffer.full():
                         for traj in traj_buffer.get_trajectory():
                             for i in range(len(traj)):
-                                adj_factor = args.adj_factor if args.algo in ['higl', 'aclg', 'iacrs'] else 1
+                                adj_factor = args.adj_factor if args.algo in ['higl', 'aclg', 'dca'] else 1
                                 for k in range(int(args.manager_propose_freq * adj_factor)):
                                     for j in range(1, min(int(args.manager_propose_freq * adj_factor - k), len(traj) - i)):  # k+1步邻域
                                         s1 = tuple(np.round(traj[i]).astype(np.int32))
@@ -690,7 +690,7 @@ def run_higl(args):
                         print(flags)
                         if not args.load_adj_net:
                             print("Training adjacency network...")
-                            if args.algo == "iacrs":
+                            if args.algo == "dca":
                                 for k in range(int(args.manager_propose_freq * adj_factor)):
                                     utils.train_adj_net(a_net[k], state_list, adj_mat[int(args.manager_propose_freq * adj_factor - k - 1)][:n_states, :n_states],
                                                     optimizer_r, args.r_margin_pos, args.r_margin_neg,
@@ -703,7 +703,7 @@ def run_higl(args):
                                                 device=device, verbose=True)
 
                             if args.save_models:
-                                if args.algo=='iacrs':
+                                if args.algo=='dca':
                                     for i in range(int(args.manager_propose_freq * adj_factor)):
                                         r_filename = os.path.join(args.save_dir,
                                                                   "{}_{}_{}_{}_a_network_{}.pth".format(args.env_name,

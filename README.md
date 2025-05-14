@@ -1,12 +1,12 @@
-# Inter-layer Alignment and Contracting Reward Shaping for Hierarchical Reinforcement Learning (IACRS)
-This is a PyTorch implementation for our paper: Inter-layer Alignment and Contracting Reward Shaping for Hierarchical Reinforcement Learning.
+# Dynamic capacity alignment for Hierarchical Reinforcement Learning (DCA-HRL)
+This is a PyTorch implementation for our paper: Dynamic capacity alignment for Hierarchical Reinforcement Learning.
 
 Our code is based on official implementation of [GCMR](https://github.com/HaoranWang-TJ/GCMR_ACLG_official) (TNNLS 2024).
 
 ## Installation
 ```
-conda create -n iacrs python=3.7
-conda activate iacrs
+conda create -n dca python=3.7
+conda activate dca
 ./install_all.sh
 ```
 
@@ -57,26 +57,26 @@ e.g., cp mjkey.txt ~/.mujoco/mjkey.txt
 
 - Ant Maze (U-shape)
 ```
-./scripts/iacrs_ant_maze_u.sh ${reward_shaping} ${timesteps} ${gpu} ${seed}
-./scripts/iacrs_ant_maze_u.sh sparse 5e5 0 2
-./scripts/iacrs_ant_maze_u.sh dense 5e5 0 2
+./scripts/dca_ant_maze_u.sh ${reward_shaping} ${timesteps} ${gpu} ${seed}
+./scripts/dca_ant_maze_u.sh sparse 5e5 0 2
+./scripts/dca_ant_maze_u.sh dense 5e5 0 2
 ```
 
 - FetchPickAndPlace
 ```
-./scripts/iacrs_openai_fetch.sh ${env} ${timesteps} ${gpu} ${seed}
-./scripts/iacrs_openai_fetch.sh FetchPickAndPlace-v1 5e5 0 2
+./scripts/dca_openai_fetch.sh ${env} ${timesteps} ${gpu} ${seed}
+./scripts/dca_openai_fetch.sh FetchPickAndPlace-v1 5e5 0 2
 ```
 
 - FetchReach
 ```
-./scripts/iacrs_openai_fetch.sh ${env} ${timesteps} ${gpu} ${seed}
-./scripts/iacrs_openai_fetch.sh FetchReach-v1 3e5 0 2
+./scripts/dca_openai_fetch.sh ${env} ${timesteps} ${gpu} ${seed}
+./scripts/dca_openai_fetch.sh FetchReach-v1 3e5 0 2
 ```
 
 - Ant Maze Complex
 ```
-./scripts/iacrs_ant_maze_complex.sh ${reward_shaping} ${timesteps} ${gpu} ${seed}
-./scripts/iacrs_ant_maze_complex.sh sparse 10e5 0 2
-./scripts/iacrs_ant_maze_complex.sh dense 10e5 0 2
+./scripts/dca_ant_maze_complex.sh ${reward_shaping} ${timesteps} ${gpu} ${seed}
+./scripts/dca_ant_maze_complex.sh sparse 10e5 0 2
+./scripts/dca_ant_maze_complex.sh dense 10e5 0 2
 ```

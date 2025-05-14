@@ -5,10 +5,10 @@ SEED=$4
 
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
---env_name "AntPush-v1" \
+CUDA_VISIBLE_DEVICES=${GPU} python main.py \
+--env_name "AntMazeBottleneck-v1" \
 --reward_shaping ${REWARD_SHAPING} \
---algo iacrs \
+--algo dca \
 \
 \
 --correction_type m-OPC \
@@ -23,12 +23,12 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --osp_delta 20 \
 --osp_delta_update_rate 0 \
 --rollout_exp_w 0.95 \
---ctrl_mgp_lambda 1.0 \
---ctrl_osrp_lambda 0.0005 \
+--ctrl_mgp_lambda 10 \
+--ctrl_osrp_lambda 0.005 \
 --ctrl_gcmr_start_step 20000 \
 \
 \
---version "${REWARD_SHAPING}_iacrs" \
+--version "${REWARD_SHAPING}_dca" \
 --goal_loss_coeff 20 \
 --landmark_loss_coeff 1 \
 --delta 2.0 \
@@ -38,5 +38,4 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --n_landmark_coverage 60 \
 --use_novelty_landmark \
 --novelty_algo rnd \
---n_landmark_novelty 60 \
---sparse_rew_type gau
+--n_landmark_novelty 60

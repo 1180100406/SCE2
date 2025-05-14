@@ -1,15 +1,16 @@
-TIMESTEPS=$1
-GPU=$2
-SEED=$3
+ENV=$1
+TIMESTEPS=$2
+GPU=$3
+SEED=$4
 
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
+CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --absolute_goal \
 --delta 2.0 \
---env_name 'HandManipulatePen-v0' \
+--env_name ${ENV} \
 --reward_shaping "sparse" \
---algo iacrs \
+--algo dca \
 \
 \
 --correction_type m-OPC \
@@ -50,5 +51,5 @@ CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --close_thr 0.2 \
 --clip_v -15 \
 --goal_thr -5 \
---version "sparse_iacrs" \
+--version "sparse_dca" \
 --sparse_rew_type gau \

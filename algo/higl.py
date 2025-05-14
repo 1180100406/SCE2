@@ -257,7 +257,7 @@ class Manager(object):
         avg_act_loss, avg_crit_loss, avg_goal_loss, avg_ld_loss, avg_floss, avg_norm_sel = 0., 0., 0., 0., 0., 0.
         avg_scaled_norm_direction = get_tensor(np.array([0.] * self.action_dim)).squeeze()
 
-        if algo in ['higl', 'aclg', 'iacrs'] and self.planner is None and total_timesteps >= self.planner_start_step:
+        if algo in ['higl', 'aclg', 'dca'] and self.planner is None and total_timesteps >= self.planner_start_step:
             self.init_planner()
 
         for it in range(iterations):
@@ -327,7 +327,7 @@ class Manager(object):
                 actor_loss = actor_loss + self.goal_loss_coeff * goal_loss
                 avg_goal_loss += goal_loss
 
-            elif algo in ['higl', 'aclg', 'iacrs']:
+            elif algo in ['higl', 'aclg', 'dca']:
                 assert a_net is not None
 
                 if self.planner is None:  # If planner is not ready
@@ -350,7 +350,7 @@ class Manager(object):
                                                                                         self.no_pseudo_landmark)
                 if algo == "higl":
                     actor_loss = actor_loss + self.landmark_loss_coeff * ld_loss
-                elif algo == "aclg" or algo == "iacrs":
+                elif algo == "aclg" or algo == "dca":
                     actor_loss = actor_loss + self.goal_loss_coeff * goal_loss + self.landmark_loss_coeff * follow_loss
                 else:
                     raise NotImplementedError

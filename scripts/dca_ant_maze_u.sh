@@ -1,18 +1,17 @@
+#!/bin/bash
 REWARD_SHAPING=$1
 TIMESTEPS=$2
 GPU=$3
 SEED=$4
-
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} python main.py \
+CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --env_name "AntMaze-v1" \
 --reward_shaping ${REWARD_SHAPING} \
---algo iacrs \
+--algo dca \
 \
 \
---correction_type m-OPC \
---use_model_based_rollout \
+--correction_type OPC \
 --fkm_hidden_size 256 \
 --fkm_hidden_layer_num 3 \
 --fkm_network_num 5 \
@@ -28,7 +27,7 @@ CUDA_VISIBLE_DEVICES=${GPU} python main.py \
 --ctrl_gcmr_start_step 20000 \
 \
 \
---version "${REWARD_SHAPING}_stochastic_0.05_iacrs" \
+--version "${REWARD_SHAPING}_dca" \
 --goal_loss_coeff 20 \
 --landmark_loss_coeff 1 \
 --delta 2.0 \
@@ -39,5 +38,5 @@ CUDA_VISIBLE_DEVICES=${GPU} python main.py \
 --use_novelty_landmark \
 --novelty_algo rnd \
 --n_landmark_novelty 60 \
---stochastic_xy \
---stochastic_sigma 0.05
+--sparse_rew_type spa \
+--save_models \
