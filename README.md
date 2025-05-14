@@ -1,5 +1,5 @@
-# Dynamic capacity alignment for Hierarchical Reinforcement Learning (DCA-HRL)
-This is a PyTorch implementation for our paper: Dynamic capacity alignment for Hierarchical Reinforcement Learning.
+# Dynamic Capacity-Aligned for Hierarchical Reinforcement Learning (DCA-HRL)
+This is a PyTorch implementation for our paper: Dynamic Capacity-Aligned for Hierarchical Reinforcement Learning.
 
 Our code is based on official implementation of [GCMR](https://github.com/HaoranWang-TJ/GCMR_ACLG_official) (TNNLS 2024).
 
