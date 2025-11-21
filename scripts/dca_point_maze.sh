@@ -5,8 +5,8 @@ SEED=$4
 
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} python main.py \
---env_name "PointMaze-v1" \
+CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
+--env_name "pointmaze-large-navigate-v0" \
 --reward_shaping ${REWARD_SHAPING} \
 --algo dca \
 \
@@ -39,4 +39,6 @@ CUDA_VISIBLE_DEVICES=${GPU} python main.py \
 --novelty_algo rnd \
 --n_landmark_novelty 60 \
 --delta 2.0 \
---adj_factor 0.7
+--adj_factor 0.7 \
+--sparse_rew_type spa \
+

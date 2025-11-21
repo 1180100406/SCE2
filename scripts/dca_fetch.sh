@@ -15,12 +15,12 @@ else
     ld_num=60
 fi
 
-CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
+CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --absolute_goal \
 --delta ${delta} \
 --env_name ${ENV} \
 --reward_shaping "sparse" \
---algo dca \
+--algo aclg \
 \
 \
 --correction_type m-OPC \
@@ -61,4 +61,4 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --clip_v -15 \
 --goal_thr -5 \
 --version "sparse_dca" \
---sparse_rew_type nor \
+--sparse_rew_type con \

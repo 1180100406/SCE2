@@ -30,7 +30,7 @@ parser.add_argument("--binary_int_reward", action="store_true")
 parser.add_argument("--man_tau", default=0.005, type=float)
 parser.add_argument("--man_batch_size", default=128, type=int)
 parser.add_argument("--man_buffer_size", default=2e5, type=int)
-parser.add_argument("--man_rew_scale", default=1, type=float)
+parser.add_argument("--man_rew_scale", default=1e0, type=float)
 parser.add_argument("--man_act_lr", default=1e-4, type=float)
 parser.add_argument("--man_crit_lr", default=1e-3, type=float)
 parser.add_argument("--candidate_goals", default=10, type=int)
@@ -39,7 +39,7 @@ parser.add_argument("--train_manager_freq", default=10, type=int)
 parser.add_argument("--discount", default=0.99, type=float)
 
 # Reward shaping
-parser.add_argument("--sparse_rew_type", default='nor', type=str, choices=["gau", "nor", "sor", "spa"]
+parser.add_argument("--sparse_rew_type", default='nor', type=str, choices=["gau", "nor", "sor", "spa", "con", "explors", "count", "relara", "drnd"]
                     , help="gau for gaussian-like convergence reward shaping, nor for naive reward shaping, sor for SORS, spa for sparse reward.")
 
 # TODO: Rollout-based Off-policy correction
@@ -130,11 +130,17 @@ parser.add_argument("--save_replay_buffer", action="store_true")
 parser.add_argument("--load", action="store_true")
 parser.add_argument("--load_dir", default="./models/steps/450000", type=str)
 parser.add_argument("--load_algo", type=str)
-parser.add_argument("--log_dir", default="home/dca/logs", type=str)
+parser.add_argument("--log_dir", default="/home/yuanwenyu/DCA-HRL_explore/logs", type=str)
 parser.add_argument("--load_replay_buffer", action="store_true")
 parser.add_argument("--load_adj_net", default=False, action="store_true")
 
 parser.add_argument("--version", type=str, default='v0')
+
+parser.add_argument("--cov_rew_scale", type=float, default=1e-1)
+parser.add_argument("--ent_rew_scale", type=float, default=1e-3)
+parser.add_argument("--count_bonus_coef", type=float, default=1e-3)
+parser.add_argument("--relara_beta", type=float, default=1e-2)
+parser.add_argument("--ra_policy_frequency", type=float, default=2)
 
 args = parser.parse_args()
 

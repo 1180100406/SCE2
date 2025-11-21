@@ -2,7 +2,7 @@ import numpy as np
 
 class OffPolicyCorrections(object):
     def __init__(self, absolute_goal:bool, controller_policy, batch_size, subgoals, obs, acts, ags, candidate_num
-                 , subgoal_scale, subgoal_dim, fkm_obj, exp_w=0.0):
+                 , subgoal_scale, subgoal_dim, fkm_obj, goal_start_dim, exp_w=0.0):
         self.absolute_goal = absolute_goal
         self.controller_policy = controller_policy
         self.batch_size = batch_size
@@ -13,6 +13,7 @@ class OffPolicyCorrections(object):
         self.candidate_num = candidate_num
         self.subgoal_scale = subgoal_scale
         self.subgoal_dim = subgoal_dim
+        self.goal_start_dim = goal_start_dim
 
         self.fkm_obj = fkm_obj
 
@@ -95,7 +96,7 @@ class OffPolicyCorrections(object):
                     np.array(self.obs)[:, t+1:t+2, :], ncands, axis=1).reshape((self.batch_size * ncands, -1))
                 # new state
                 if not self.absolute_goal:
-                    _candidate = (_candidate + _curr_state[:, :self.subgoal_dim]) - _next_state[:, :self.subgoal_dim]
+                    _candidate = (_candidate + _curr_state[:, self.goal_start_dim:self.goal_start_dim+self.subgoal_dim]) - _next_state[:, self.goal_start_dim:self.goal_start_dim+self.subgoal_dim]
                     _candidate = _candidate.clip(-self.subgoal_scale[:self.subgoal_dim], self.subgoal_scale[:self.subgoal_dim])
                 _curr_state = _next_state
 
@@ -122,7 +123,7 @@ class OffPolicyCorrections(object):
     
 
 class HindsightRelabeling(object):
-    def __init__(self, absolute_goal:bool, manager_policy, controller_policy, batch_size, subgoals, obs, ac_g, goals, subgoal_scale, subgoal_dim, fkm_obj):
+    def __init__(self, absolute_goal:bool, manager_policy, controller_policy, batch_size, subgoals, obs, ac_g, goals, subgoal_scale, subgoal_dim, fkm_obj, goal_start_dim):
         self.absolute_goal = absolute_goal
         self.manager_policy = manager_policy
         self.controller_policy = controller_policy
@@ -133,6 +134,7 @@ class HindsightRelabeling(object):
         self.goals = goals
         self.subgoal_scale = subgoal_scale
         self.subgoal_dim = subgoal_dim
+        self.goal_start_dim = goal_start_dim
 
         self.fkm_obj = fkm_obj
 
@@ -159,11 +161,11 @@ class HindsightRelabeling(object):
                     _next_state = _next_state.clip(self.fkm_obj.scaler.obs_min, self.fkm_obj.scaler.obs_max)
                 # new state
                 if not self.absolute_goal:
-                    _subgoal = (_subgoal + _curr_state[:, :self.subgoal_dim]) - _next_state[:, :self.subgoal_dim]
+                    _subgoal = (_subgoal + _curr_state[:, self.goal_start_dim:self.goal_start_dim+self.subgoal_dim]) - _next_state[:, self.goal_start_dim:self.goal_start_dim+self.subgoal_dim]
                     _subgoal = _subgoal.clip(-self.subgoal_scale[:self.subgoal_dim], self.subgoal_scale[:self.subgoal_dim])
                 _curr_state = _next_state
             
-            return _curr_state[:, :self.subgoal_dim]
+            return _curr_state[:, self.goal_start_dim:self.goal_start_dim+self.subgoal_dim]
     
         if self.fkm_obj is not None and self.fkm_obj.trained:
             # the Foresight Goal Inference (FGI), please refer to "MapGo: Model-Assisted Policy Optimization for Goal-Oriented Tasks"

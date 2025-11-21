@@ -38,5 +38,4 @@ CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --use_novelty_landmark \
 --novelty_algo rnd \
 --n_landmark_novelty 60 \
---sparse_rew_type spa \
---save_models \
+--sparse_rew_type gau \

@@ -5,12 +5,12 @@ SEED=$4
 
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
+CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --absolute_goal \
 --delta 2.0 \
 --env_name ${ENV} \
 --reward_shaping "sparse" \
---algo dca \
+--algo aclg \
 \
 \
 --correction_type m-OPC \
@@ -52,4 +52,4 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --clip_v -15 \
 --goal_thr -5 \
 --version "sparse_dca" \
---sparse_rew_type gau \
+--sparse_rew_type con \

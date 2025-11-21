@@ -3,6 +3,7 @@ import argparse
 import random
 from gym import Wrapper
 from gym.wrappers.normalize import RunningMeanStd
+from gym.spaces import Box, Dict
 
 # import envs.create_maze_env
 
@@ -145,6 +146,12 @@ class GatherEnv(object):
         self.env_name = env_name
         self.evaluate = False
         self.count = 0
+        
+        self.observation_space = Dict({
+            'observation': self.base_env.observation_space,
+            'achieved_goal': Box(-np.inf, np.inf, shape=(2,)),
+            'desired_goal': Box(-np.inf, np.inf, shape=(2,)),
+        })
 
     def seed(self, seed):
         self.base_env.seed(seed)
@@ -167,7 +174,7 @@ class GatherEnv(object):
             'desired_goal': None,
         }
         return next_obs, reward, done or self.count >= 500, info
-
+        
     @property
     def action_space(self):
         return self.base_env.action_space
@@ -202,6 +209,12 @@ class EnvWithGoal(object):
 
         self.stochastic_xy = stochastic_xy
         self.stochastic_sigma = stochastic_sigma
+        
+        self.observation_space = Dict({
+            'observation': self.base_env.observation_space,
+            'achieved_goal': Box(-np.inf, np.inf, shape=(self.goal_dim,)),
+            'desired_goal': Box(-np.inf, np.inf, shape=(self.goal_dim,)),
+        })
 
     def seed(self, seed):
         self.base_env.seed(seed)
@@ -256,7 +269,7 @@ class EnvWithGoal(object):
         image_obs = np.flipud(image_obs)
 
         return image_obs
-
+        
     @property
     def action_space(self):
         return self.base_env.action_space
@@ -300,6 +313,10 @@ class TrainTestWrapper(object):
         image_obs = np.flipud(image_obs)
 
         return image_obs
+        
+    @property
+    def observation_space(self):
+        return self.base_env.observation_space
 
     @property
     def action_space(self):
@@ -345,11 +362,20 @@ class OpenAIFetch(Wrapper):
         obs = super().reset()
         obs = self.obs_wrapper(obs)
         return obs
+        
+    def goal_distance(self, achieved_goal, desired_goal):
+        return np.linalg.norm(achieved_goal - desired_goal, axis=-1)
+        
+    def _is_success(self, achieved_goal, desired_goal):
+        distance_threshold = 0.05
+        d = self.goal_distance(achieved_goal, desired_goal)
+        return (d < self.distance_threshold).astype(np.float32)
 
     def step(self, action):
         obs, rwd, done, info = super().step(action)
         obs = self.obs_wrapper(obs)
         rwd += -1.0 * np.linalg.norm(action, axis=-1)
+        info['is_success'] = self._is_success(obs['achieved_goal'][..., :self.goal_dim], obs['desired_goal'][..., :self.goal_dim])
         return obs, rwd, done, info
 
 

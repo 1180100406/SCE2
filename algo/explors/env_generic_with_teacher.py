@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class EnvTeacher(gym.Env):
 
-    def __init__(self, env, args, teacher_name):
+    def __init__(self, env, args, teacher_name, env_name):
         super(EnvTeacher, self).__init__()
         self.teachers = ["Orig", "ExploB", "SelfRS", "ExploRS", "sors", "SORS_with_Rbar", "LIRPG_without_metagrad"]
         if teacher_name not in self.teachers:
@@ -24,24 +24,31 @@ class EnvTeacher(gym.Env):
         self.teacher_name = teacher_name
 
         # declare open gym necessary attributes
-        self.observation_space = self.env.base_env.observation_space
-        self.action_space = self.env.base_env.action_space
-        self.n_actions = 8
+        if 'Ant' in env_name or 'Pusher' in env_name or 'Reacher' in env_name:
+            observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=env.observation_space['observation'].shape)
+            action_space = gym.spaces.Box(low=env.action_space.low[0], high=env.action_space.high[0], shape=env.action_space.shape)
+        else:
+            observation_space = env.observation_space
+            action_space = env.action_space
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.n_actions = self.env.action_space.shape[0]
         self.gamma = 0.99
 
         # discretization
         self.chunk_size = 0.1
-        self.n_chunks = int(1 / self.chunk_size)
-        # self.ExploB_w = np.zeros(2 * 2 * 2 * self.n_chunks)
-        #self.ExploB_w = np.zeros((1 + env.base_env.n_picks) * self.n_chunks) # has key or does not have key state
+        self.n_chunks = int(np.ceil(100 / self.chunk_size))
+        self.ExploB_w = np.zeros(2 * self.n_chunks)
+        #self.ExploB_w = np.zeros((1 + env.n_picks) * self.n_chunks) # has key or does not have key state
 
         # self.chunk_centroids = self.get_chunks_zero_one_interval()
 
         # declate different type of teacher's networks
-        #self.SelfRS_network = models.RexploitNetwork(env.base_env, args) #.to(device)
-        #self.value_network = models.CriticNetwork(env.base_env, args) #.to(device)
-        self.rsors_network = models.RSORSNetwork(env.base_env, args) #.to(device)
-        #self.lirpg_network = models.RLIRPGNetwork(env.base_env, args) #.to(device)
+        
+        self.SelfRS_network = models.RexploitNetwork(self.observation_space, action_space, args) #.to(device)
+        self.value_network = models.CriticNetwork(self.observation_space, args) #.to(device)
+        '''self.rsors_network = models.RSORSNetwork(env, args) #.to(device)
+        self.lirpg_network = models.RLIRPGNetwork(env, args) #.to(device)'''
 
         self.goal_visits = 0.0
         self.episode_goal_visited = None
@@ -135,11 +142,6 @@ class EnvTeacher(gym.Env):
     #enddef
 
     def Rexplore(self, state):
-
-        if self.env.terminal_state == 1 and \
-                state[0] == - 1:
-            return 0.0
-
         numerator = self.args["ExploB_lmbd"]
         N_s = np.power(self.args["ExploB_lmbd"] / self.args["ExploB_max"], 2.0) + self.ExploB_w[self.phi(state)]
         denominator = np.sqrt(N_s)
@@ -148,8 +150,7 @@ class EnvTeacher(gym.Env):
     # enddef
 
     def Rexploit(self, state, action):
-        R_exploit = self.SelfRS_network.network(torch.Tensor(state))
-        return R_exploit[action] * self.clipping_epsilon
+        return self.SelfRS_network.network(torch.cat([torch.Tensor(state), torch.Tensor(action)], dim=0)) * self.clipping_epsilon
     # enddef
 
     def R_ExploRS(self, state, action, next_state):
@@ -161,7 +162,7 @@ class EnvTeacher(gym.Env):
     #enddef
 
     def R_lirpg(self, state, action):
-        return self.lirpg_network.network(torch.Tensor(state))[action] * self.clipping_epsilon
+        return self.lirpg_network.network(torch.cat([torch.Tensor(state), torch.Tensor(action)], dim=0)) * self.clipping_epsilon
     #enddef
 
     def update(self, D, agent=None, epsilon_reinforce=0.0):
@@ -201,13 +202,8 @@ class EnvTeacher(gym.Env):
 
         coord_x = state[0]
         chunk_number = 0
-        if self.env.n_picks == 1:
-            if state[1] == 1:
-                chunk_number = 1
-
-        if self.env.n_picks > 1:
-            if state[1] == 1:
-                chunk_number = 1 + np.nonzero(state[4:])[0][0]
+        if state[1] == 1:
+            chunk_number = 1
 
 
         abstracted_state_tmp = np.floor(coord_x / self.chunk_size)
@@ -311,58 +307,52 @@ class EnvTeacher(gym.Env):
     # enddef
 
     def update_SelfRS(self, D):
-
         self.first_succesfull_traj = True
-
+    
         postprocess_D = self.postprocess_data(D)
-
+    
         for traj in postprocess_D:
             states_batch = []
             returns_batch_G_bar = []
             accumulator = []
-
+    
             if traj[0][7] > 0.0 and self.first_succesfull_traj:
                 self.nonzero_return_count += 1
                 self.first_succesfull_traj = False
-
+    
             for s, a, _, _, _, pi_given_s_array, _, G_bar in traj:
-
-                # save states batch and returns batch for training value network
                 states_batch.append(s)
                 returns_batch_G_bar.append(G_bar)
-                V_s = float(self.value_network.network(torch.Tensor(s)).detach().numpy())
-                one_hot_encoding_action_a = np.zeros(self.n_actions)
-                one_hot_encoding_action_a[a] = 1.0
-                one_hot_encoding_action_a_var = Variable(torch.Tensor(one_hot_encoding_action_a))
-
-                # sum over action b
-                accumulator_sum_action_b = []
-                for b in range(self.n_actions):
-                    one_hot_encoding_action_b = np.zeros(self.n_actions)
-                    one_hot_encoding_action_b[b] = 1.0
-                    one_hot_encoding_action_b_var = Variable(torch.Tensor(one_hot_encoding_action_b))
-                    accumulator_sum_action_b.append(torch.sum(self.SelfRS_network.network(torch.Tensor(s)) *
-                                                              one_hot_encoding_action_b_var * pi_given_s_array[b]))
-
-                final_result_left_hand_side = torch.sum(self.SelfRS_network.network(torch.Tensor(s)) *
-                                                        one_hot_encoding_action_a_var) \
-                                              - torch.sum(torch.stack(accumulator_sum_action_b))
-
-                accumulator.append(pi_given_s_array[a] * (G_bar - V_s) *
-                                   final_result_left_hand_side)
-
+                V_s = float(self.value_network.network(torch.Tensor(s)).detach().cpu().numpy())
+    
+                s_tensor = torch.Tensor(s)
+                a_tensor = torch.Tensor(a)
+                sa_tensor = torch.cat([s_tensor, a_tensor], dim=0)
+    
+                phi_sa = self.SelfRS_network.network(sa_tensor)
+    
+                expected_phi = 0.0
+                for _ in range(self.args.get("n_explore_samples", 10)):
+                    b_sample = np.random.uniform(low=self.action_space.low, high=self.action_space.high)
+                    b_tensor = torch.Tensor(b_sample)
+                    sb_tensor = torch.cat([s_tensor, b_tensor], dim=0)
+                    expected_phi += self.SelfRS_network.network(sb_tensor)
+                expected_phi /= self.args.get("n_explore_samples", 10)
+    
+                advantage = G_bar - V_s
+                accumulator.append(advantage * (phi_sa - expected_phi))
+    
             loss = -torch.mean(torch.stack(accumulator))
-
-            # update SelfRS network
+    
             self.SelfRS_network.zero_grad()
             self.SelfRS_network.optimizer.zero_grad()
             loss.backward()
             self.SelfRS_network.optimizer.step()
-
+    
             states_batch = np.array(states_batch)
             returns_batch_G_bar = np.array(returns_batch_G_bar)
-
             self.update_value_network(states_batch, returns_batch_G_bar)
+
 
     # enddef
 
@@ -475,7 +465,7 @@ class EnvTeacher(gym.Env):
         k = 0
         if count > 1:
             while d is False:
-                x, y, _, _, _, u, _, d, _, _, _ = (array[num+k] for array in episode)
+                x, y, _, _, _, u, _, d, _, _, _, _, _ = (array[num+k] for array in episode)
                 k += 1
         
                 # postProcessed episode --> [state, action, \hat{r}, next_state, \hat(G), \pi(.|state), \bar{r}, \bar{G}]
@@ -484,7 +474,7 @@ class EnvTeacher(gym.Env):
                 postprocessed_epidata.append(e_t)
         else:
             for j in range(len(episode[0])):
-                x, y, _, _, _, u, _, d, _, _, _ = (array[num+k] for array in episode)
+                x, y, _, _, _, u, _, d, _, _, _, _, _ = (array[num+k] for array in episode)
                 k += 1
         
                 # postProcessed episode --> [state, action, \hat{r}, next_state, \hat(G), \pi(.|state), \bar{r}, \bar{G}]

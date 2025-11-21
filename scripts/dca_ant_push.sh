@@ -5,10 +5,10 @@ SEED=$4
 
 # The hyperparameters associated with method A are marked with backslash (\\**\\)
 
-CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
+CUDA_VISIBLE_DEVICES=${GPU} nohup python3 ../main.py \
 --env_name "AntPush-v1" \
 --reward_shaping ${REWARD_SHAPING} \
---algo dca \
+--algo aclg \
 \
 \
 --correction_type m-OPC \
@@ -39,4 +39,4 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 ../main.py \
 --use_novelty_landmark \
 --novelty_algo rnd \
 --n_landmark_novelty 60 \
---sparse_rew_type gau
+--sparse_rew_type con

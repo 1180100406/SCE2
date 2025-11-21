@@ -19,7 +19,7 @@ class AntMazeBottleneckEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     objects_nqpos = [0]
     objects_nqvel = [0]
     reward_type = 'sparse'
-    distance_threshold = 5
+    distance_threshold = 0.5
     action_threshold = np.array([30., 30., 30., 30., 30., 30., 30., 30.])
     init_xy = np.array([0,0])
 
@@ -64,18 +64,23 @@ class AntMazeBottleneckEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def step(self, a):
         self.do_simulation(a, self.frame_skip)
 
-
         done = False
         ob = self._get_obs()
-        reward = self.compute_reward(ob['achieved_goal'], self.goal, sparse=self.sparse_style)
-        dist = self.compute_reward(ob['achieved_goal'], self.goal, sparse=self.sparse_style)
-        success = (self.goal_distance(ob['achieved_goal'], self.goal) <= self.distance_threshold)
+        dist = self.goal_distance(ob['achieved_goal'], self.goal)
+        success = (dist <= self.distance_threshold)
+        
+        # Update reward based on success
+        if success:
+            reward = 1.0
+        else:
+            reward = -dist
+            
         self.nb_step = 1 + self.nb_step
         # @Haoran.Wang: early_stop
         done = bool((self.nb_step >= self.max_step) or (success and self.nb_step % 10 == 0))
         info = {
             'is_success': success,
-            'success': success,
+            'success': float(success),
             'dist': dist
         }
         return ob, reward, done, info

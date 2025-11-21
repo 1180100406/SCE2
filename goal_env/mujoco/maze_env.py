@@ -54,6 +54,9 @@ class MazeEnv(gym.Env):
         self._put_spin_near_agent = put_spin_near_agent
         self._top_down_view = top_down_view
         self._manual_collision = manual_collision
+        
+        # Add goal-related attributes
+        self._goal_tol = 0.5  # Success threshold
 
         self.MAZE_STRUCTURE = structure = maze_env_utils.construct_maze(
             maze_id=self._maze_id)
@@ -506,23 +509,24 @@ class MazeEnv(gym.Env):
 
     def step(self, action):
         self.t += 1
-        assert not self._is_in_collision(self.wrapped_env.get_xy()), self.wrapped_env.get_xy()
-        if self._manual_collision:
-            # old_pos = self.wrapped_env.get_xy()
-            old_pos = self.wrapped_env.get_xy().copy()
-            inner_next_obs, inner_reward, done, info = self.wrapped_env.step(
-                action)
-            new_pos = self.wrapped_env.get_xy()
-            if self._is_in_collision(new_pos):
-                self.wrapped_env.set_xy(old_pos)
-        else:
-            inner_next_obs, inner_reward, done, info = self.wrapped_env.step(
-                action)
-        next_obs = self._get_obs()
-        done = False
+        self.wrapped_env.step(action)
+        ob = self._get_obs()
+        
+        # Check if goal is reached
+        current_xy = self.wrapped_env.get_xy()
         if self.GOAL is not None:
-            #print(self.EPS, next_obs[:2], self.GOAL[:2])
-            done = bool(((next_obs[:2] - self.GOAL[:2])**2).sum() < self.EPS)
-            inner_reward = int(done)
-
-        return next_obs, inner_reward, done, info
+            dist = np.linalg.norm(current_xy - self.GOAL)
+            success = dist <= self._goal_tol
+            if success:
+                reward = 1.0
+            else:
+                reward = -dist
+        else:
+            success = False
+            reward = 0.0
+            
+        done = False
+        info = {
+            'success': float(success)
+        }
+        return ob, reward, done, info

@@ -50,6 +50,10 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
         self.stochastic_xy = stochastic_xy
         self.stochastic_sigma = stochastic_sigma
+        
+        # Add goal-related attributes
+        self._goal_tol = 0.5  # Success threshold
+        self.cur_goal_xy = np.zeros(2)  # Current goal position
 
         mujoco_env.MujocoEnv.__init__(self, file_path, 5)
         utils.EzPickle.__init__(self)
@@ -76,14 +80,23 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         forward_reward = (xposafter - xposbefore) / self.dt
         ctrl_cost = .5 * np.square(a).sum()
         survive_reward = 1.0
-        reward = forward_reward - ctrl_cost + survive_reward
+        
+        # Add success check
+        current_xy = self.get_xy()
+        success = np.linalg.norm(current_xy - self.cur_goal_xy) <= self._goal_tol
+        if success:
+            reward = 1.0
+        else:
+            reward = forward_reward - ctrl_cost + survive_reward
+            
         state = self.state_vector()
         done = False
         ob = self._get_obs()
         return ob, reward, done, dict(
                 reward_forward=forward_reward,
                 reward_ctrl=-ctrl_cost,
-                reward_survive=survive_reward)
+                reward_survive=survive_reward,
+                success=float(success))
 
     def _get_obs(self):
         # No cfrc observation
@@ -154,3 +167,7 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
     def get_xy(self):
         return self.data.qpos[:2]
+
+    def set_goal(self, goal_xy):
+        """Set the goal position."""
+        self.cur_goal_xy = np.array(goal_xy)

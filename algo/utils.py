@@ -325,7 +325,7 @@ def get_mbrl_fetch_reward_function(env, env_name, binary_reward, absolute_goal):
     if env_name in ["FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0']:
         action_penalty_coeff = 0.1
         distance_threshold = 0.05
-    if env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0']:
+    if env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0', 'PandaPush-v3']:
         if absolute_goal and not binary_reward:
             def controller_reward(ag, subgoal, next_ag, scale, action):
                 reward = -np.sum(np.square(ag - subgoal))
@@ -378,7 +378,10 @@ class StorageElement:
     def __init__(self, state, achieved_goal, score):
         self.state = state
         self.achieved_goal = achieved_goal
-        self.score = score
+        if torch.is_tensor(score):
+            self.score = float(score.cpu().item())
+        else:
+            self.score = float(score)
 
     def __eq__(self, other):
         return np.isclose(self.score, other.score)

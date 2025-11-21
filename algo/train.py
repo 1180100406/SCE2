@@ -15,12 +15,27 @@ import algo.utils as utils
 import algo.higl as higl
 from algo.models import ANet
 from algo.fkm import FKMInterface
+from algo.relara.Networks import BasicActor, BasicQNetwork
+from algo.relara.Algorithms import ReLaraAlgo
+from algo.drnd.agents import DRNDAgent
 
 import gym
 from goal_env import *
 from goal_env.mujoco import *
+import ogbench
 
 from envs import EnvWithGoal, TrainTestWrapper, OpenAIFetch
+
+from scipy.spatial import ConvexHull, QhullError
+from sklearn.decomposition import PCA
+from sklearn.neighbors import KernelDensity
+import hashlib
+from collections import defaultdict
+
+from stable_baselines3.common.buffers import ReplayBuffer
+
+import gymnasium
+import panda_gym
 
 
 def evaluate_policy(env,
@@ -32,6 +47,7 @@ def evaluate_policy(env,
                     manager_propose_frequency=10,
                     eval_idx=0,
                     eval_episodes=5,
+                    goal_dim=2,
                     ):
     print("Starting evaluation number {}...".format(eval_idx))
     env.evaluate = True
@@ -42,11 +58,22 @@ def evaluate_policy(env,
         global_steps = 0
         goals_achieved = 0
         for eval_ep in range(eval_episodes):
-            obs = env.reset()
+            if "Ant" in env_name or 'Fetch' in env_name or 'Pusher' in env_name or 'Reacher' in env_name:
+                obs = env.reset()
+                goal = obs["desired_goal"]
+                achieved_goal = obs["achieved_goal"]
+                state = obs["observation"]
+            elif 'Panda' in env_name:
+                obs, _ = env.reset()
+                goal = obs["desired_goal"]
+                achieved_goal = obs["achieved_goal"]
+                state = obs["observation"]
+            else:
+                obs, info = env.reset()
 
-            goal = obs["desired_goal"]
-            achieved_goal = obs["achieved_goal"]
-            state = obs["observation"]
+                goal = info['goal'][:goal_dim]
+                achieved_goal = obs[:goal_dim]
+                state = obs
 
             done = False
             step_count = 0
@@ -58,16 +85,25 @@ def evaluate_policy(env,
                 step_count += 1
                 global_steps += 1
                 action = controller_policy.select_action(state, subgoal)
-                new_obs, reward, done, info = env.step(action)
-                is_success = info['is_success']
+                if "Ant" in env_name or 'Fetch' in env_name or 'Pusher' in env_name or 'Reacher' in env_name:
+                    new_obs, reward, done, info = env.step(action)
+                    new_achieved_goal = new_obs['achieved_goal']
+                    new_state = new_obs["observation"]
+                    is_success = info['is_success']
+                elif 'Panda' in env_name:
+                    new_obs, reward, terminated, done, info = env.step(action)                                                      
+                    is_success = terminated
+                    new_achieved_goal = new_obs['achieved_goal']
+                    new_state = new_obs["observation"]
+                else:
+                    new_obs, reward, terminated, done, info = env.step(action)                                                      
+                    is_success = terminated
+                    new_achieved_goal = new_obs[:goal_dim]
+                    new_state = new_obs
                 if is_success:
                     env_goals_achieved += 1
                     goals_achieved += 1
                     done = True
-
-                goal = new_obs["desired_goal"]
-                new_achieved_goal = new_obs['achieved_goal']
-                new_state = new_obs["observation"]
 
                 subgoal = controller_policy.subgoal_transition(achieved_goal, subgoal, new_achieved_goal)
 
@@ -92,18 +128,30 @@ def evaluate_policy(env,
         print("---------------------------------------")
 
         env.evaluate = False
-
-        final_x = new_obs['achieved_goal'][0]
-        final_y = new_obs['achieved_goal'][1]
-
-        final_subgoal_x = subgoal[0]
-        final_subgoal_y = subgoal[1]
-        try:
-            final_z = new_obs['achieved_goal'][2]
-            final_subgoal_z = subgoal[2]
-        except IndexError:
-            final_z = 0
-            final_subgoal_z = 0
+        if "Ant" in env_name or 'Fetch' in env_name or 'Panda' in env_name or 'Pusher' in env_name or 'Reacher' in env_name:
+            final_x = new_obs["observation"][0]
+            final_y = new_obs["observation"][1]
+    
+            final_subgoal_x = subgoal[0]
+            final_subgoal_y = subgoal[1]
+            try:
+                final_z = new_obs["observation"][2]
+                final_subgoal_z = subgoal[2]
+            except IndexError:
+                final_z = 0
+                final_subgoal_z = 0
+        else:
+            final_x = new_obs[0]
+            final_y = new_obs[1]
+    
+            final_subgoal_x = subgoal[0]
+            final_subgoal_y = subgoal[1]
+            try:
+                final_z = new_obs[2]
+                final_subgoal_z = subgoal[2]
+            except IndexError:
+                final_z = 0
+                final_subgoal_z = 0
 
         return avg_reward, avg_controller_rew, avg_step_count, avg_env_finish, \
                final_x, final_y, final_z, \
@@ -111,7 +159,7 @@ def evaluate_policy(env,
 
 
 def check_con_ability(policy, a_net, r_margin, state, subgoal, writer, total_timesteps, goal_dim):
-    state_k = policy.select_action(state, subgoal, to_numpy=False)
+    state_k = policy.select_action(state, subgoal, to_numpy=False).detach()
     length = len(a_net)
     for i in range(length):
         dis = F.pairwise_distance(a_net[i](state_k[:goal_dim]), a_net[i](state[:goal_dim].float()))
@@ -129,7 +177,48 @@ def sigmoid(x):
     return 1 / (1 + math.exp(-x))
 
 
+def compute_coverage(points, min_dim=2):
+    points = np.array(points)
+    n_points, dim = points.shape
+
+    if n_points <= min_dim:
+        return 0.0
+    if dim <= min_dim:
+        return ConvexHull(points).volume
+    rank = np.linalg.matrix_rank(points)
+    max_dim = min(rank, dim)
+
+    for d in range(max_dim, min_dim - 1, -1):
+        try:
+            pca = PCA(n_components=d)
+            reduced = pca.fit_transform(points)
+            hull = ConvexHull(reduced)
+            return hull.volume
+        except QhullError:
+            continue
+        except Exception as e:
+            print(f"[Warning] Unexpected error in ConvexHull: {e}")
+            break
+
+    return 0.0
+    
+def kde_entropy(achieved_goal_seq, bandwidth=0.1):
+    achieved_goal_seq = np.array(achieved_goal_seq)
+    kde = KernelDensity(kernel='gaussian', bandwidth=bandwidth)
+    kde.fit(achieved_goal_seq)
+    
+    log_probs = kde.score_samples(achieved_goal_seq)
+    entropy = -np.mean(log_probs)
+    return entropy
+
+def simhash(obs, dims=64):
+    obs_bytes = obs.tobytes()
+    hash_digest = hashlib.sha256(obs_bytes).digest()
+    return int.from_bytes(hash_digest[:dims//8], 'little')
+
 def run_higl(args):
+    os.environ['MUJOCO_GL'] = 'egl'
+
     if not os.path.exists("./results"):
         os.makedirs("./results")
     if args.save_models and not os.path.exists(args.save_dir):
@@ -147,7 +236,7 @@ def run_higl(args):
         import pickle
         with open("{}/{}_{}_{}_{}_opts.pkl".format(args.save_dir, args.env_name, args.algo, args.version, args.seed), "wb") as f:
             pickle.dump(args, f)
-
+    
     if "Ant" in args.env_name:
         if "Bottleneck" in args.env_name:
             step_style = args.reward_shaping == 'sparse'
@@ -160,24 +249,17 @@ def run_higl(args):
                                        , stochastic_xy=args.stochastic_xy
                                        , stochastic_sigma=args.stochastic_sigma
                                        ), env_name=args.env_name, step_style=step_style)
-    elif "Point" in args.env_name:
-        assert not args.stochastic_xy
-        step_style = args.reward_shaping == 'sparse'
-        env = EnvWithGoal(gym.make(args.env_name), env_name=args.env_name, step_style=step_style)
-    elif "Montezuma" in args.env_name:
-        step_style = args.reward_shaping == 'sparse'
-        env = EnvWithGoal(gym.make(args.env_name), env_name=args.env_name, step_style=step_style)
+    elif 'Fetch' in args.env_name:
+        env = gym.make(args.env_name, reward_type=args.reward_shaping)
+        if args.env_name in ["FetchPickAndPlace-v1", "FetchPush-v1"]:
+            env = gym.wrappers.TimeLimit(env.env, max_episode_steps=100)
+            env = OpenAIFetch(env, args.env_name)
+    elif 'Pusher' in args.env_name or 'Reacher' in args.env_name:
+        env = gym.make(args.env_name, reward_shaping=args.reward_shaping)
+    elif 'Panda' in args.env_name:
+        env = gymnasium.make(args.env_name)
     else:
-        if 'Fetch' in args.env_name:
-            env = gym.make(args.env_name, reward_type=args.reward_shaping)
-            if args.env_name in ["FetchPickAndPlace-v1", "FetchPush-v1"]:
-                env = gym.wrappers.TimeLimit(env.env, max_episode_steps=100)
-                env = OpenAIFetch(env, args.env_name)
-        elif 'Hand' in args.env_name or 'Car' in args.env_name:
-            env = gym.make(args.env_name)
-        else:
-            env = gym.make(args.env_name, reward_shaping=args.reward_shaping)
-        # env_test = gym.make(args.env_name_test, reward_shaping=args.reward_shaping)
+        env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
 
     max_action = float(env.action_space.high[0])
     train_ctrl_policy_noise = args.train_ctrl_policy_noise
@@ -186,34 +268,6 @@ def run_higl(args):
     train_man_policy_noise = args.train_man_policy_noise
     train_man_noise_clip = args.train_man_noise_clip
 
-    if args.env_name in ["Reacher3D-v0"]:
-        high = np.array([1., 1., 1., ])
-        low = - high
-    elif args.env_name in ["Pusher-v0"]:
-        high = np.array([2., 2., 2., 2., 2.])
-        low = - high
-    elif args.env_name in ["FetchPush-v1"]:
-        high = np.array([0.8, 0.8, 0.8, 0.8, 0.8])
-        low = - high
-    elif args.env_name in ["FetchPickAndPlace-v1"]:
-        high = np.array([0.8, 0.8, 0.8, 0.8, 0.8, 0.8])
-        low = - high
-    elif args.env_name in ["HandManipulatePen-v0"]:
-        high = np.array([0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8])
-        low = - high
-    elif "AntMaze" in args.env_name or "PointMaze" in args.env_name \
-        or "AntPush" in args.env_name:
-        high = np.array((10., 10.))
-        low = - high
-    elif args.env_name in ['MountainCarContinuous-v0']:
-        high = np.array([0.6,0.07])
-        low = np.array([-1.2,-0.07])
-    else:
-        raise NotImplementedError
-
-    man_scale = (high - low) / 2
-    absolute_goal_scale = 0
-
     if args.absolute_goal:
         no_xy = False
     else:
@@ -221,15 +275,68 @@ def run_higl(args):
             no_xy = True
         else:
             no_xy = False
-
-    obs = env.reset()
-    print("obs: ", obs)
-
-    goal = obs["desired_goal"]
-    state = obs["observation"]
-    achieved_goal = obs["achieved_goal"]
+    if "Ant" in args.env_name or 'Fetch' in args.env_name or 'Pusher' in args.env_name or 'Reacher' in args.env_name:
+        obs = env.reset()
+        goal = obs["desired_goal"]
+        goal_dim = goal.shape[0]
+        state = obs["observation"]
+        state_dim = state.shape[0]
+        achieved_goal = obs["achieved_goal"]
+        controller_goal_dim = obs["achieved_goal"].shape[0]
+        action_dim = env.action_space.shape[0]
+        goal_start_dim = 0
+    elif 'Panda' in args.env_name:
+        obs, _ = env.reset()
+        goal = obs["desired_goal"]
+        goal_dim = goal.shape[0]
+        state = obs["observation"]
+        state_dim = state.shape[0]
+        achieved_goal = obs["achieved_goal"]
+        controller_goal_dim = obs["achieved_goal"].shape[0]
+        action_dim = env.action_space.shape[0]
+        goal_start_dim = 0
+    else:
+        obs, info = env.reset()
+        state_dim = obs.shape[0]
+        goal_dim = 2
+        goal_start_dim = 0
+        action_dim = env.action_space.shape[0]
+        goal, next_goal = info['goal'][goal_start_dim:goal_start_dim+goal_dim], info['goal'][goal_start_dim:goal_start_dim+goal_dim],
+        state = obs
+        achieved_goal = state[goal_start_dim:goal_start_dim+goal_dim]
+        controller_goal_dim = goal_dim
+    entropy_start_flag = True
+    
+    if args.env_name == "antmaze-medium-navigate-v0":
+        high = np.array([20., 20.])
+        low = - high
+    elif args.env_name == "pointmaze-large-navigate-v0" or args.env_name == 'pointmaze-teleport-navigate-v0':
+        high = np.array([30., 20.])
+        low = - high
+    elif "AntMaze" in args.env_name or "PointMaze" in args.env_name \
+        or "AntPush" in args.env_name:
+        high = np.array([10., 10.])
+        low = - high
+    elif args.env_name in ["FetchPush-v1"]:
+        high = np.array([0.8, 0.8, 0.8, 0.8, 0.8])
+        low = - high
+    elif args.env_name in ["FetchPickAndPlace-v1"]:
+        high = np.array([0.8, 0.8, 0.8, 0.8, 0.8, 0.8])
+        low = - high
+    elif args.env_name in ["PandaPush-v3"]:
+        high = np.array([0.05, 0.05, 0.05])
+        low = - high
+    elif args.env_name in ["Reacher3D-v0"]:
+        high = np.array([1., 1., 1., ])
+        low = - high
+    elif args.env_name in ["Pusher-v0"]:
+        high = np.array([2., 2., 2., 2., 2.])
+        low = - high
+    
+    man_scale = (high - low) / 2
+    absolute_goal_scale = 0        
+    
     distance0 = np.linalg.norm(achieved_goal - goal)
-    controller_goal_dim = obs["achieved_goal"].shape[0]
     if args.reward_shaping == 'sparse':
         tb_path = "{}/{}/{}/{}".format(args.env_name, args.algo, args.version, args.seed, args.sparse_rew_type)
     else:
@@ -251,22 +358,17 @@ def run_higl(args):
 
     file_name = "{}_{}_{}".format(args.env_name, args.algo, args.seed)
     output_data = {"frames": [], "reward": [], "dist": []}
-
-    env.seed(args.seed)
+    
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    state_dim = state.shape[0]
-    goal_dim = goal.shape[0]
-    action_dim = env.action_space.shape[0]
-
-    if args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0']:
+    if args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0', 'PandaPush-v3']:
         calculate_controller_reward = utils.get_mbrl_fetch_reward_function(env, args.env_name,
                                                                            binary_reward=args.binary_int_reward,
                                                                            absolute_goal=args.absolute_goal)
-    elif "Point" in args.env_name or "Ant" in args.env_name:
+    elif "Point" in args.env_name or "Ant" in args.env_name or "ant" in args.env_name or "point" in args.env_name:
         calculate_controller_reward = utils.get_reward_function(env, args.env_name,
                                                                 absolute_goal=args.absolute_goal,
                                                                 binary_reward=args.binary_int_reward)
@@ -366,7 +468,7 @@ def run_higl(args):
     n_states = 0
     state_list = []
     state_dict = {}
-    adj_mat_size = 1000
+    adj_mat_size = 100000
     adj_mat = []
     adj_factor = args.adj_factor if args.algo in ['higl', 'aclg', 'dca'] else 1
     for i in range(int(args.manager_propose_freq * adj_factor)):
@@ -375,11 +477,11 @@ def run_higl(args):
     if args.algo in ['higl', 'hrac', 'aclg', 'dca']:
         if args.algo == 'dca':
             a_net = []
-            re_a_net = []
+            optimizer_r = []
             for i in range(int(args.manager_propose_freq * adj_factor)):
                 a_net.append(ANet(controller_goal_dim, args.r_hidden_dim, args.r_embedding_dim))
                 a_net[i].to(device)
-                optimizer_r = optim.Adam(a_net[i].parameters(), lr=args.lr_r)
+                optimizer_r.append(optim.Adam(a_net[i].parameters(), lr=args.lr_r))
         else:
             a_net = ANet(controller_goal_dim, args.r_hidden_dim, args.r_embedding_dim)
             if args.load_adj_net:
@@ -439,8 +541,9 @@ def run_higl(args):
     ctrl_lossls = utils.LossesList()
     man_lossls = utils.LossesList()
     skip_ctrl_train = 0
-    sigma = 1e5
+    sigma = 2e5
     env_teacher = None
+    drnd_agent = None
     if args.sparse_rew_type == 'sor':
         hyper_parameters = parameters.parameters()
         teacher_args = hyper_parameters.teacher_args_chain
@@ -448,10 +551,72 @@ def run_higl(args):
         N_r = teaching_args["N_r"]
         env_teacher = EnvTeacher(env, teacher_args, 'sors')
         env_teacher.switch_teacher = True
+    elif args.sparse_rew_type == 'explors':
+        hyper_parameters = parameters.parameters()
+        teacher_args = hyper_parameters.teacher_args_chain
+        teaching_args = hyper_parameters.teaching_args
+        N_r = teaching_args["N_r"]
+        env_teacher = EnvTeacher(env, teacher_args, 'ExploRS', args.env_name)
+        env_teacher.switch_teacher = True
+    elif args.sparse_rew_type == 'relara':
+        relara_agent = ReLaraAlgo(
+            env=env,
+            pa_actor_class=BasicActor,
+            pa_critic_class=BasicQNetwork,
+            ra_actor_class=BasicActor,
+            ra_critic_class=BasicQNetwork,
+            exp_name="ReLara-RAonly",
+            seed=args.seed,
+            cuda=args.gid if hasattr(args, 'gid') else 0,
+            gamma=args.discount if hasattr(args, 'discount') else 0.99,
+            proposed_reward_scale=1.0,
+            beta=0.2,
+            pa_buffer_size=1,
+            pa_batch_size=1,
+            ra_buffer_size=1_000_000,
+            ra_batch_size=256,
+            pa_actor_lr=1e-4,
+            pa_critic_lr=1e-4,
+            pa_alpha_lr=1e-4,
+            ra_actor_lr=3e-4,
+            ra_critic_lr=1e-3,
+            ra_alpha_lr=1e-4,
+            pa_policy_frequency=1,
+            pa_target_frequency=1,
+            ra_policy_frequency=2,
+            ra_target_frequency=1,
+            pa_tau=0.005,
+            ra_tau=0.005,
+            pa_alpha=0.2,
+            pa_alpha_autotune=True,
+            ra_alpha=0.2,
+            ra_alpha_autotune=True,
+            write_frequency=100,
+            save_frequency=100000,
+            save_folder="./ReLara-RAonly/",
+            env_name = args.env_name
+        )
+        obs_ra = None
+    elif args.sparse_rew_type == 'drnd':
+        drnd_agent = DRNDAgent(
+            input_size=state_dim,
+            output_size=action_dim,
+            num_env=1,
+            num_step=args.num_step if hasattr(args, 'num_step') else 5,
+            gamma=1,
+            learning_rate=1e-4,
+            use_cuda=(args.gid is not None),
+        )
+
         
     start_con = 0
     start_man = 0
     start_con_eval = 0
+    
+    coverage = 0
+    entropy = 0
+    terminated_flag = False
+    count_table = defaultdict(int)
     while total_timesteps < args.max_timesteps:
         if sigma != 1:
             sigma -= 1
@@ -530,6 +695,8 @@ def run_higl(args):
                                             sparse_rew_type=args.sparse_rew_type,
                                             sigma=sigma,
                                             man_rew_scale=args.man_rew_scale,
+                                            goal_start_dim=goal_start_dim,
+                                            drnd_agent=drnd_agent
                                             )
                 '''if args.sparse_rew_type=='gau':
                     start_man=len(manager_buffer.storage[0])'''
@@ -598,7 +765,7 @@ def run_higl(args):
                     #start_con_eval=len(controller_eval_buffer.storage[0])
 
                     # Train manager
-                    if timesteps_since_manager >= args.train_manager_freq:
+                    if timesteps_since_manager >= args.train_manager_freq and len(manager_buffer) > 0:
                         timesteps_since_manager = 0
                         r_margin = (args.r_margin_pos + args.r_margin_neg) / 2
                         if args.algo == 'dca':
@@ -625,6 +792,8 @@ def run_higl(args):
                                                 sparse_rew_type=args.sparse_rew_type,
                                                 sigma=sigma,
                                                 man_rew_scale=args.man_rew_scale,
+                                                goal_start_dim=goal_start_dim,
+                                                drnd_agent=drnd_agent
                                                 )
                         '''if args.sparse_rew_type=='gau':
                             start_man=len(manager_buffer.storage[0])'''
@@ -636,12 +805,13 @@ def run_higl(args):
                     final_x, final_y, final_z, final_subgoal_x, final_subgoal_y, final_subgoal_z = \
                         evaluate_policy(env, args.env_name, manager_policy, controller_policy,
                                         calculate_controller_reward, args.ctrl_rew_scale,
-                                        args.manager_propose_freq, len(evaluations), eval_episodes=args.eval_episode_num)
+                                        args.manager_propose_freq, len(evaluations), eval_episodes=args.eval_episode_num, goal_dim=goal_dim)
 
                     writer.add_scalar("eval/avg_ep_rew", avg_ep_rew, total_timesteps)
+                    writer.add_scalar("eval/avg_controller_rew", avg_controller_rew, total_timesteps)
 
                     if "Maze" in args.env_name or "AntPush" in args.env_name \
-                        or args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0']:
+                        or args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0', 'antmaze-medium-navigate-v0', "pointmaze-large-navigate-v0", "PandaPush-v3", 'pointmaze-teleport-navigate-v0']:
                         writer.add_scalar("eval/avg_steps_to_finish", avg_steps, total_timesteps)
                         writer.add_scalar("eval/perc_env_goal_achieved", avg_env_finish, total_timesteps)
 
@@ -684,7 +854,7 @@ def run_higl(args):
                                         adj_mat[int(args.manager_propose_freq * adj_factor - k - 1)][state_dict[s2], state_dict[s1]] = 1
 
                         print("Explored states: {}".format(n_states))
-                        flags = np.ones((25, 25))
+                        flags = np.ones((100, 100))
                         for s in state_list:
                             flags[int(s[0]), int(s[1])] = 0
                         print(flags)
@@ -693,7 +863,7 @@ def run_higl(args):
                             if args.algo == "dca":
                                 for k in range(int(args.manager_propose_freq * adj_factor)):
                                     utils.train_adj_net(a_net[k], state_list, adj_mat[int(args.manager_propose_freq * adj_factor - k - 1)][:n_states, :n_states],
-                                                    optimizer_r, args.r_margin_pos, args.r_margin_neg,
+                                                    optimizer_r[k], args.r_margin_pos, args.r_margin_neg,
                                                     n_epochs=args.r_training_epochs, batch_size=args.r_batch_size,
                                                     device=device, verbose=True)
                             else:
@@ -728,10 +898,8 @@ def run_higl(args):
                 if fkm_obj is not None and enable_fkm and (total_timesteps - fkm_obj_last_train_step) >= args.train_fkm_freq:
                     if fkm_obj.trained:
                         fkm_val_loss = fkm_obj.eval(manager_buffer, args.fkm_batch_size)
-                        writer.add_scalar("data/fkm_val_loss", fkm_val_loss, total_timesteps)
 
                     fkm_loss = fkm_obj.train(manager_buffer, args.fkm_batch_size)
-                    writer.add_scalar("data/fkm_loss", fkm_loss, total_timesteps)
 
                     fkm_obj_last_train_step = total_timesteps
 
@@ -747,17 +915,32 @@ def run_higl(args):
                     manager_transition['next_state'] = state
                     manager_transition['done'] = float(True)
                     manager_buffer.add(manager_transition)
-
             # Reset environment
-            obs = env.reset()
-            goal = obs["desired_goal"]
-            achieved_goal = obs["achieved_goal"]
-            state = obs["observation"]
+            if "Ant" in args.env_name or 'Fetch' in args.env_name  or 'Pusher' in args.env_name or 'Reacher' in args.env_name:
+                obs = env.reset()
+                goal = obs["desired_goal"]
+                achieved_goal = obs["achieved_goal"]
+                state = obs["observation"]
+            elif 'Panda' in args.env_name:
+                obs, _ = env.reset()
+                goal = obs["desired_goal"]
+                achieved_goal = obs["achieved_goal"]
+                state = obs["observation"]
+            else:
+                obs, info = env.reset()
+                achieved_goal = obs[goal_start_dim:goal_start_dim+goal_dim]
+                state = obs
+                goal = info['goal'][goal_start_dim:goal_start_dim+goal_dim]
+            coverage = 0
+            entropy = 0
+            entropy_start_flag = True
 
             ep_obs_seq = [state]  # For Novelty PQ
             ep_ac_seq = [achieved_goal]
             traj_buffer.create_new_trajectory()
             traj_buffer.append(achieved_goal)
+            
+            achieved_goal_seq = [achieved_goal]
 
             done = False
             episode_reward = 0
@@ -800,13 +983,27 @@ def run_higl(args):
         action = controller_policy.select_action(state, subgoal)
         action = ctrl_noise.perturb_action(action, -max_action, max_action)
         action_copy = action.copy()
-
-        next_tup, manager_reward, env_done, info = env.step(action_copy)
-        manager_transition['is_success'].append(info['is_success'])
-
-        next_goal = next_tup["desired_goal"]
-        next_achieved_goal = next_tup['achieved_goal']
-        next_state = next_tup["observation"]
+        if "Ant" in args.env_name or 'Fetch' in args.env_name  or 'Pusher' in args.env_name or 'Reacher' in args.env_name:
+            next_tup, manager_reward, env_done, info = env.step(action_copy)
+            manager_transition['is_success'].append(info['is_success'])
+            next_goal = goal
+            next_achieved_goal = next_tup['achieved_goal']
+            next_state = next_tup["observation"]
+            terminated = info['is_success']
+        elif 'Panda' in args.env_name:
+            obs, manager_reward, terminated, env_done, info = env.step(action_copy)
+            manager_transition['is_success'].append(terminated)
+            next_goal = obs['desired_goal']
+            next_achieved_goal = obs['achieved_goal']
+            next_state = obs["observation"]
+        else:
+            obs, manager_reward, terminated, env_done, info = env.step(action_copy)
+            manager_transition['is_success'].append(terminated)
+            next_state = obs
+            next_goal = goal
+            next_achieved_goal = obs[goal_start_dim:goal_start_dim+goal_dim]
+            
+        achieved_goal_seq.append(next_achieved_goal)
         
         # Update cumulative reward for the manager
         if args.reward_shaping == 'sparse':
@@ -816,19 +1013,53 @@ def run_higl(args):
                     manager_transition['reward'] += gd(sigmoid(distance1)*sigma, 0, sigma) - gd(sigmoid(distance0)*sigma, 0, sigma)
                     distance0 = distance1
                 else:
-                    manager_transition['reward'] += float(info['is_success']) * args.man_rew_scale
+                    manager_transition['reward'] += float(terminated) * args.man_rew_scale
             elif args.sparse_rew_type == 'nor':
                 distance1 = -np.linalg.norm(next_achieved_goal - next_goal)
-                manager_transition['reward'] += distance1
+                manager_transition['reward'] += distance1 * args.man_rew_scale
             elif args.sparse_rew_type == 'spa':
-                manager_transition['reward'] += float(info['is_success']) * args.man_rew_scale
+                manager_transition['reward'] += float(terminated) * args.man_rew_scale
             elif args.sparse_rew_type == 'sor':
                 if (total_timesteps+1) % N_r == 0:
                     env_teacher.update(controller_buffer, None, None)
                 if env_teacher.switch_teacher == True:
                     manager_transition['reward'] += env_teacher.get_reward(state, action_copy, next_state).detach().cpu().numpy() * args.man_rew_scale
                 else:
-                    manager_transition['reward'] += float(info['is_success']) * args.man_rew_scale
+                    manager_transition['reward'] += float(terminated) * args.man_rew_scale
+            elif args.sparse_rew_type == 'explors':
+                if (total_timesteps+1) % N_r == 0:
+                    env_teacher.update(controller_buffer, None, None)
+                if env_teacher.switch_teacher == True:
+                    manager_transition['reward'] += env_teacher.get_reward(state, action_copy, next_state).detach().cpu().numpy() * args.man_rew_scale
+                else:
+                    manager_transition['reward'] += float(terminated) * args.man_rew_scale
+            elif args.sparse_rew_type == 'con':
+                manager_transition['reward'] += float(terminated) * args.man_rew_scale
+                if terminated:
+                    terminated_flag = True
+            elif args.sparse_rew_type == 'count':
+                manager_transition['reward'] += float(terminated) * args.man_rew_scale
+                simhash_key = simhash(next_achieved_goal)
+                count_table[simhash_key] += 1
+                exploration_bonus = args.count_bonus_coef / np.sqrt(count_table[simhash_key])
+                manager_transition['reward'] += exploration_bonus
+            elif args.sparse_rew_type == 'relara':
+                manager_transition['reward'] += float(terminated) * args.man_rew_scale
+                new_obs_ra = np.hstack((state, action))
+                reward_proposed, _, _ = relara_agent.ra_actor.get_action(
+                    torch.Tensor(np.expand_dims(new_obs_ra, axis=0)).to(relara_agent.device)
+                )
+                reward_proposed = reward_proposed.detach().cpu().numpy()[0]
+                manager_transition['reward'] += args.relara_beta * reward_proposed
+                if obs_ra is not None:
+                    relara_agent.ra_replay_buffer.add(obs_ra, new_obs_ra, reward_proposed, float(terminated) * args.man_rew_scale, done, info)
+                obs_ra = new_obs_ra
+                if (total_timesteps+1) % args.ra_policy_frequency == 0:
+                    relara_agent.optimize_ra(total_timesteps)
+            elif args.sparse_rew_type == 'drnd':
+                manager_transition['reward'] += float(terminated) * args.man_rew_scale
+                intrinsic_reward = drnd_agent.compute_intrinsic_reward(next_state.reshape(1, *next_state.shape))
+                manager_transition['reward'] += intrinsic_reward[0] * 1e-5
         else:
             manager_transition['reward'] += manager_reward * args.man_rew_scale
         if controller_eval_transition['next_achieved_goal'] is None:
@@ -891,6 +1122,24 @@ def run_higl(args):
             manager_transition['next_state'] = state
             manager_transition['next_achieved_goal'] = achieved_goal
             manager_transition['done'] = float(done)
+            if args.sparse_rew_type == 'con':
+                cov_rew_scale = args.cov_rew_scale
+                ent_rew_scale = args.ent_rew_scale
+                new_entropy = kde_entropy(achieved_goal_seq)
+                new_coverage = compute_coverage(achieved_goal_seq)
+                if entropy_start_flag:
+                    entropy = new_entropy
+                    entropy_start_flag = False
+                if terminated_flag:
+                    terminated_flag = False
+                    manager_transition['reward'] -= cov_rew_scale * new_coverage + ent_rew_scale * new_entropy
+                else:
+                    manager_transition['reward'] += cov_rew_scale * (new_coverage - coverage) + ent_rew_scale * (new_entropy - entropy)
+                coverage = new_coverage
+                entropy = new_entropy
+                writer.add_scalar("data/coverage", coverage, total_timesteps)
+                writer.add_scalar("data/entropy", entropy, total_timesteps)
+            writer.add_scalar("data/manager_ep_rew", manager_transition['reward'], total_timesteps)
             manager_buffer.add(manager_transition)
 
             controller_eval_transition['next_state'] = state
@@ -903,7 +1152,6 @@ def run_higl(args):
                 subgoal = man_noise.perturb_action(subgoal, min_action=-man_scale, max_action=man_scale)
 
             # Reset number of timesteps since we sampled a subgoal
-            writer.add_scalar("data/manager_ep_rew", manager_transition['reward'], total_timesteps)
             timesteps_since_subgoal = 0
 
             # Create a high level transition
@@ -927,13 +1175,14 @@ def run_higl(args):
     avg_ep_rew, avg_controller_rew, avg_steps, avg_env_finish, \
     final_x, final_y, final_z, final_subgoal_x, final_subgoal_y, final_subgoal_z = \
         evaluate_policy(env, args.env_name, manager_policy, controller_policy, calculate_controller_reward,
-                        args.ctrl_rew_scale, args.manager_propose_freq, len(evaluations), eval_episodes=args.eval_episode_num)
+                        args.ctrl_rew_scale, args.manager_propose_freq, len(evaluations), eval_episodes=args.eval_episode_num, goal_dim=goal_dim)
 
     writer.add_scalar("eval/avg_ep_rew", avg_ep_rew, total_timesteps)
+    writer.add_scalar("eval/avg_controller_rew", avg_controller_rew, total_timesteps)
 
     print(args.env_name)
     if "Maze" in args.env_name or "AntPush" in args.env_name \
-        or args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0']:
+        or args.env_name in ["Reacher3D-v0", "Pusher-v0", "FetchPickAndPlace-v1", "FetchPush-v1", 'HandManipulatePen-v0', 'antmaze-medium-navigate-v0', "pointmaze-large-navigate-v0", "PandaPush-v3", 'pointmaze-teleport-navigate-v0']:
         writer.add_scalar("eval/avg_steps_to_finish", avg_steps, total_timesteps)
         writer.add_scalar("eval/perc_env_goal_achieved", avg_env_finish, total_timesteps)
 

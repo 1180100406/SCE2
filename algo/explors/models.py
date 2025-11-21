@@ -62,18 +62,18 @@ class ActorNetwork(torch.nn.Module):
 
         # update the parameters of the Actor Network
         self.optimizer.step()
-        return loss_to_return.detach().numpy()
+        return loss_to_return.detach().cpu().numpy()
     #enddef
 # endclass
 
 
 #critic class
 class CriticNetwork(torch.nn.Module):
-    def __init__(self, env, argv, n_nodes=256):
+    def __init__(self, observation_space, argv, n_nodes=256):
         super().__init__()
         # specifics of the network architecture
         self.network = torch.nn.Sequential(
-            torch.nn.Linear(env.observation_space.shape[0], n_nodes),
+            torch.nn.Linear(observation_space.shape[0], n_nodes),
             torch.nn.ReLU(),
             torch.nn.Linear(n_nodes, 1)
         ).float()
@@ -118,19 +118,19 @@ class CriticNetwork(torch.nn.Module):
         # update the parameters of the Critic Network
         self.optimizer.step()
 
-        return loss.detach().numpy()
+        return loss.detach().cpu().numpy()
     #enddef
 #endclass
 
 
 class RexploitNetwork(torch.nn.Module):
-    def __init__(self, env, argv, n_nodes=256):
+    def __init__(self, observation_space, action_space, argv, n_nodes=256):
         super().__init__()
         # specifics of network architecture
         self.network = torch.nn.Sequential(
-            torch.nn.Linear(env.observation_space.shape[0], n_nodes),
+            torch.nn.Linear(observation_space.shape[0]+action_space.shape[0], n_nodes),
             torch.nn.ReLU(),
-            torch.nn.Linear(n_nodes, env.action_space.n),
+            torch.nn.Linear(n_nodes, 1),
             torch.nn.Tanh()
         ).float()
         # optimizer for the Actor Network
@@ -152,7 +152,7 @@ class RSORSNetwork(torch.nn.Module):
         super().__init__()
         # specifics of network architecture
         self.network = torch.nn.Sequential(
-            torch.nn.Linear(env.observation_space.shape[0]+8, n_nodes),
+            torch.nn.Linear(env.observation_space.shape[0]+env.action_space.shape[0], n_nodes),
             torch.nn.ReLU(),
             torch.nn.Linear(n_nodes, 1),
             torch.nn.Tanh()
@@ -179,9 +179,9 @@ class RLIRPGNetwork(torch.nn.Module):
         super().__init__()
         # specifics of network architecture
         self.network = torch.nn.Sequential(
-            torch.nn.Linear(env.observation_space.shape[0], n_nodes),
+            torch.nn.Linear(env.observation_space.shape[0]+8, n_nodes),
             torch.nn.ReLU(),
-            torch.nn.Linear(n_nodes, env.action_space.n),
+            torch.nn.Linear(n_nodes, 1),
             torch.nn.Tanh()
         ).float()
         # optimizer for the Actor Network

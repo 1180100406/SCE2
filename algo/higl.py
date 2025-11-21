@@ -206,18 +206,18 @@ class Manager(object):
         else:
             return self.actor(state, goal).squeeze()
 
-    def goal_relabeling(self, controller_policy, batch_size, subgoals, x_seq, a_seq, ag_seq, goals, fkm_obj=None, exp_w=1.0):
+    def goal_relabeling(self, controller_policy, batch_size, subgoals, x_seq, a_seq, ag_seq, goals, goal_start_dim, fkm_obj=None, exp_w=1.0):
         if self.correction_type == 'm-OPC':
-            opc_obj = OffPolicyCorrections(self.absolute_goal, controller_policy, batch_size, subgoals.copy(), x_seq, a_seq, ag_seq, self.candidate_goals, self.scale, self.action_dim, fkm_obj, exp_w)
+            opc_obj = OffPolicyCorrections(self.absolute_goal, controller_policy, batch_size, subgoals.copy(), x_seq, a_seq, ag_seq, self.candidate_goals, self.scale, self.action_dim, fkm_obj, goal_start_dim, exp_w)
             relabeled_goals = opc_obj.get_corrected_goals()
         elif self.correction_type == 'OSP':
-            hr_obj = HindsightRelabeling(self.absolute_goal, self, controller_policy, batch_size, subgoals.copy(), x_seq, ag_seq, goals, self.scale, self.action_dim, fkm_obj)
+            hr_obj = HindsightRelabeling(self.absolute_goal, self, controller_policy, batch_size, subgoals.copy(), x_seq, ag_seq, goals, self.scale, self.action_dim, fkm_obj, goal_start_dim)
             relabeled_goals = hr_obj.get_relabeled_goals()
         elif self.correction_type == 'OPC':
-            opc_obj = OffPolicyCorrections(self.absolute_goal, controller_policy, batch_size, subgoals.copy(), x_seq, a_seq, ag_seq, self.candidate_goals, self.scale, self.action_dim, None, exp_w)
+            opc_obj = OffPolicyCorrections(self.absolute_goal, controller_policy, batch_size, subgoals.copy(), x_seq, a_seq, ag_seq, self.candidate_goals, self.scale, self.action_dim, None, goal_start_dim, exp_w)
             relabeled_goals = opc_obj.get_corrected_goals()
         elif self.correction_type == 'HAC':
-            hr_obj = HindsightRelabeling(self.absolute_goal, self, controller_policy, batch_size, subgoals.copy(), x_seq, ag_seq, goals, self.scale, self.action_dim, None)
+            hr_obj = HindsightRelabeling(self.absolute_goal, self, controller_policy, batch_size, subgoals.copy(), x_seq, ag_seq, goals, self.scale, self.action_dim, None, goal_start_dim)
             relabeled_goals = hr_obj.get_relabeled_goals()
         else:
             return subgoals
@@ -252,6 +252,8 @@ class Manager(object):
               sparse_rew_type='gau',
               sigma=0,
               man_rew_scale=1,
+              goal_start_dim=0,
+              drnd_agent=None
               ):
         self.manager_buffer = replay_buffer
         avg_act_loss, avg_crit_loss, avg_goal_loss, avg_ld_loss, avg_floss, avg_norm_sel = 0., 0., 0., 0., 0., 0.
@@ -271,7 +273,7 @@ class Manager(object):
                         for j in range(len(ag_seq[i])-2):
                             distance1 = np.linalg.norm(ag_seq[i][j+1] - g_seq[i][j+1])
                             distance0 = np.linalg.norm(ag_seq[i][j] - g_seq[i][j])
-                            r[i] += gd(sigmoid(distance1)*sigma, 0, sigma) - gd(sigmoid(distance0)*sigma, 0, sigma)
+                            r[i] += (gd(sigmoid(distance1)*sigma, 0, sigma) - gd(sigmoid(distance0)*sigma, 0, sigma)) * man_rew_scale
                 else:
                     for i in range(batch_size):
                         for j in range(len(s_seq[i])-1):
@@ -279,7 +281,7 @@ class Manager(object):
             r=np.array(r).reshape(-1, 1)
             
             if self.correction:
-                sg = self.goal_relabeling(controller_policy, batch_size, sgorig, xobs_seq, a_seq, ag_seq, g, fkm_obj=fkm_obj, exp_w=exp_w)
+                sg = self.goal_relabeling(controller_policy, batch_size, sgorig, xobs_seq, a_seq, ag_seq, g, goal_start_dim, fkm_obj=fkm_obj, exp_w=exp_w)
             else:
                 sg = sgorig
 
@@ -315,6 +317,13 @@ class Manager(object):
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
+            
+            if drnd_agent is not None:
+                predictor_output, target_output = drnd_agent.drnd(next_state)
+                forward_loss = F.mse_loss(predictor_output, target_output.mean(dim=0).detach())
+                drnd_agent.optimizer.zero_grad()
+                forward_loss.backward()
+                drnd_agent.optimizer.step()
 
             if algo == "hiro":
                 actor_loss = self.actor_loss(state, achieved_goal, goal, a_net, r_margin)
@@ -587,6 +596,7 @@ class Controller(object):
         for it in range(iterations):
             # Sample replay buffer
             if eval == True:
+                #x, y, _, _, sg, _, _, _, _, _, _ , _, _= replay_buffer.sample(batch_size, new_first=True, start=start_con)
                 x, y, _, _, sg, _, _, _, _, _, _ , _, _= replay_buffer.sample(batch_size, start=start_con)
 
                 state = self.clean_obs(get_tensor(x))
